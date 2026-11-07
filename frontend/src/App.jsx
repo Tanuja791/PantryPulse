@@ -1,35 +1,12 @@
+
 import { getToken } from "firebase/messaging";
 import { messaging, vapidKey } from "./firebase";
 import { useEffect, useState } from "react";
 import "./App.css";
 
+const API = "https://pantrypulse-9s6b.onrender.com";
+
 function App() {
-  const enableNotifications = async () => {
-  const permission = await Notification.requestPermission();
-
-  if (permission === "granted") {
-    const registration = await navigator.serviceWorker.register(
-      "/firebase-messaging-sw.js"
-    );
-
-    const token = await getToken(messaging, {
-      vapidKey: vapidKey,
-      serviceWorkerRegistration: registration
-    });
-
-    console.log("Notification token:", token);
-    await fetch("http://localhost:5000/api/notifications/save-token", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json"
-  },
-  body: JSON.stringify({ token })
-});
-    alert("Notifications enabled successfully!");
-  } else {
-    alert("Notification permission denied.");
-  }
-};
   const [items, setItems] = useState([]);
   const [name, setName] = useState("");
   const [category, setCategory] = useState("Vegetables");
@@ -40,7 +17,6 @@ function App() {
   const [filter, setFilter] = useState("All");
   const [editId, setEditId] = useState(null);
   const [recipes, setRecipes] = useState([]);
-  const API = "http://localhost:5000/api/items";
 
   useEffect(() => {
     fetchItems();
@@ -48,16 +24,67 @@ function App() {
   }, []);
 
   async function fetchItems() {
-    const response = await fetch(API);
-    const data = await response.json();
-    setItems(data);
+    try {
+      const response = await fetch(`${API}/api/items`);
+      if (!response.ok) throw new Error("Failed to fetch items");
+      const data = await response.json();
+      setItems(data);
+    } catch (error) {
+      console.log("Items error:", error);
+    }
   }
 
   async function fetchRecipes() {
-  const response = await fetch("http://localhost:5000/api/recipes");
-  const data = await response.json();
-  setRecipes(data);
-}
+    try {
+      const response = await fetch(`${API}/api/recipes`);
+      if (!response.ok) throw new Error("Failed to fetch recipes");
+      const data = await response.json();
+      setRecipes(data);
+    } catch (error) {
+      console.log("Recipes error:", error);
+    }
+  }
+
+  const enableNotifications = async () => {
+    try {
+      const permission = await Notification.requestPermission();
+
+      if (permission === "granted") {
+        const registration = await navigator.serviceWorker.register(
+          "/firebase-messaging-sw.js"
+        );
+
+        const token = await getToken(messaging, {
+          vapidKey: vapidKey,
+          serviceWorkerRegistration: registration
+        });
+
+        console.log("Notification token:", token);
+
+        const response = await fetch(
+          `${API}/api/notifications/save-token`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ token })
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to save notification token");
+        }
+
+        alert("Notifications enabled successfully!");
+      } else {
+        alert("Notification permission denied.");
+      }
+    } catch (error) {
+      console.log("Notification error:", error);
+      alert("Unable to enable notifications. Check the console.");
+    }
+  };
 
   function getStatus(date) {
     const today = new Date();
@@ -66,7 +93,9 @@ function App() {
     const expiry = new Date(date);
     expiry.setHours(0, 0, 0, 0);
 
-    const days = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+    const days = Math.ceil(
+      (expiry - today) / (1000 * 60 * 60 * 24)
+    );
 
     if (days < 0) return "Expired";
     if (days <= 3) return "Expiring Soon";
@@ -76,29 +105,48 @@ function App() {
   async function handleSubmit(e) {
     e.preventDefault();
 
-    const item = { name, category, quantity, unit, expiryDate };
+    const item = {
+      name,
+      category,
+      quantity,
+      unit,
+      expiryDate
+    };
 
-    if (editId) {
-      await fetch(`${API}/${editId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(item),
-      });
-    } else {
-      await fetch(API, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(item),
-      });
+    try {
+      let response;
+
+      if (editId) {
+        response = await fetch(`${API}/api/items/${editId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(item)
+        });
+      } else {
+        response = await fetch(`${API}/api/items`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(item)
+        });
+      }
+
+      if (!response.ok) {
+        throw new Error("Unable to save item");
+      }
+
+      setName("");
+      setCategory("Vegetables");
+      setQuantity(1);
+      setUnit("pcs");
+      setExpiryDate("");
+      setEditId(null);
+
+      fetchItems();
+      fetchRecipes();
+    } catch (error) {
+      console.log("Save error:", error);
+      alert("Unable to save pantry item.");
     }
-
-    setName("");
-    setCategory("Vegetables");
-    setQuantity(1);
-    setUnit("pcs");
-    setExpiryDate("");
-    setEditId(null);
-    fetchItems();
   }
 
   function editItem(item) {
@@ -112,28 +160,54 @@ function App() {
 
   async function deleteItem(id) {
     if (window.confirm("Are you sure you want to delete this item?")) {
-      await fetch(`${API}/${id}`, { method: "DELETE" });
-      fetchItems();
+      try {
+        const response = await fetch(`${API}/api/items/${id}`, {
+          method: "DELETE"
+        });
+
+        if (!response.ok) {
+          throw new Error("Unable to delete item");
+        }
+
+        fetchItems();
+        fetchRecipes();
+      } catch (error) {
+        console.log("Delete error:", error);
+        alert("Unable to delete item.");
+      }
     }
   }
 
   const filteredItems = items.filter((item) => {
-    const matchesSearch = item.name.toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = item.name
+      .toLowerCase()
+      .includes(search.toLowerCase());
+
     const status = getStatus(item.expiryDate);
     const matchesFilter = filter === "All" || status === filter;
+
     return matchesSearch && matchesFilter;
   });
 
-  const fresh = items.filter((item) => getStatus(item.expiryDate) === "Fresh").length;
-  const expiring = items.filter((item) => getStatus(item.expiryDate) === "Expiring Soon").length;
-  const expired = items.filter((item) => getStatus(item.expiryDate) === "Expired").length;
+  const fresh = items.filter(
+    (item) => getStatus(item.expiryDate) === "Fresh"
+  ).length;
+
+  const expiring = items.filter(
+    (item) => getStatus(item.expiryDate) === "Expiring Soon"
+  ).length;
+
+  const expired = items.filter(
+    (item) => getStatus(item.expiryDate) === "Expired"
+  ).length;
 
   return (
     <div className="app">
       <header className="header">
-        <h1> PantryPulse</h1>
+        <h1>PantryPulse</h1>
         <p>Keep a live pulse on what's in your kitchen.</p>
       </header>
+
       <button onClick={enableNotifications}>
         Enable Notifications
       </button>
@@ -144,14 +218,17 @@ function App() {
             <h3>Total Items</h3>
             <h2>{items.length}</h2>
           </div>
+
           <div className="summary-card fresh">
             <h3>Fresh</h3>
             <h2>{fresh}</h2>
           </div>
+
           <div className="summary-card expiring">
             <h3>Expiring Soon</h3>
             <h2>{expiring}</h2>
           </div>
+
           <div className="summary-card expired">
             <h3>Expired</h3>
             <h2>{expired}</h2>
@@ -170,7 +247,10 @@ function App() {
               required
             />
 
-            <select value={category} onChange={(e) => setCategory(e.target.value)}>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            >
               <option>Vegetables</option>
               <option>Fruits</option>
               <option>Dairy</option>
@@ -187,7 +267,10 @@ function App() {
               required
             />
 
-            <select value={unit} onChange={(e) => setUnit(e.target.value)}>
+            <select
+              value={unit}
+              onChange={(e) => setUnit(e.target.value)}
+            >
               <option>pcs</option>
               <option>kg</option>
               <option>g</option>
@@ -202,17 +285,22 @@ function App() {
               required
             />
 
-            <button type="submit">{editId ? "Update Item" : "Add Item"}</button>
+            <button type="submit">
+              {editId ? "Update Item" : "Add Item"}
+            </button>
 
             {editId && (
-              <button type="button" onClick={() => {
-                setEditId(null);
-                setName("");
-                setCategory("Vegetables");
-                setQuantity(1);
-                setUnit("pcs");
-                setExpiryDate("");
-              }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditId(null);
+                  setName("");
+                  setCategory("Vegetables");
+                  setQuantity(1);
+                  setUnit("pcs");
+                  setExpiryDate("");
+                }}
+              >
                 Cancel
               </button>
             )}
@@ -230,7 +318,10 @@ function App() {
               onChange={(e) => setSearch(e.target.value)}
             />
 
-            <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+            <select
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            >
               <option>All</option>
               <option>Fresh</option>
               <option>Expiring Soon</option>
@@ -246,55 +337,70 @@ function App() {
                 <div className="item-card" key={item._id}>
                   <div>
                     <h3>{item.name}</h3>
-                    <p>{item.category} | {item.quantity} {item.unit}</p>
-                    <p>Expiry: {new Date(item.expiryDate).toLocaleDateString()}</p>
-                    <span className={`status ${getStatus(item.expiryDate).replace(" ", "-").toLowerCase()}`}>
+                    <p>
+                      {item.category} | {item.quantity} {item.unit}
+                    </p>
+                    <p>
+                      Expiry: {new Date(item.expiryDate).toLocaleDateString()}
+                    </p>
+
+                    <span
+                      className={`status ${getStatus(item.expiryDate)
+                        .replace(" ", "-")
+                        .toLowerCase()}`}
+                    >
                       {getStatus(item.expiryDate)}
                     </span>
                   </div>
 
                   <div className="actions">
-                    <button onClick={() => editItem(item)}>Edit</button>
-                    <button onClick={() => deleteItem(item._id)}>Delete</button>
+                    <button onClick={() => editItem(item)}>
+                      Edit
+                    </button>
+
+                    <button onClick={() => deleteItem(item._id)}>
+                      Delete
+                    </button>
                   </div>
                 </div>
               ))
             )}
           </div>
         </section>
+
         <section className="recipes-section">
-  <h2>🍲 Dish Recommendations</h2>
+          <h2>🍲 Dish Recommendations</h2>
 
-  {recipes.length === 0 ? (
-    <p>No matching recipes found. Add more pantry ingredients!</p>
-  ) : (
-    <div className="recipe-list">
-      {recipes.map((recipe, index) => (
-        <div className="recipe-card" key={index}>
-          <h3>{recipe.name}</h3>
+          {recipes.length === 0 ? (
+            <p>No matching recipes found. Add more pantry ingredients!</p>
+          ) : (
+            <div className="recipe-list">
+              {recipes.map((recipe, index) => (
+                <div className="recipe-card" key={index}>
+                  <h3>{recipe.name}</h3>
 
-          <p>
-            <strong>Available:</strong>{" "}
-            {recipe.matchedIngredients.join(", ")}
-          </p>
+                  <p>
+                    <strong>Available:</strong>{" "}
+                    {recipe.matchedIngredients.join(", ")}
+                  </p>
 
-          <p>
-            <strong>Missing:</strong>{" "}
-            {recipe.missingIngredients.length === 0
-              ? "None"
-              : recipe.missingIngredients.join(", ")}
-          </p>
+                  <p>
+                    <strong>Missing:</strong>{" "}
+                    {recipe.missingIngredients.length === 0
+                      ? "None"
+                      : recipe.missingIngredients.join(", ")}
+                  </p>
 
-          <p>{recipe.instructions}</p>
+                  <p>{recipe.instructions}</p>
 
-          {recipe.missingIngredients.length === 0 && (
-            <span>Ready to prepare!</span>
+                  {recipe.missingIngredients.length === 0 && (
+                    <span>Ready to prepare!</span>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
-        </div>
-      ))}
-    </div>
-  )}
-</section>
+        </section>
       </main>
     </div>
   );
